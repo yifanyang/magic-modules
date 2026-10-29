@@ -17,6 +17,37 @@ type VertexAIOperationWaiter struct {
 	tpgresource.CommonOperationWaiter
 }
 
+type vertexAIOperationError struct {
+	*tpgresource.CommonOpError
+}
+
+func (e *vertexAIOperationError) Error() string {
+	base := e.CommonOpError.Error()
+	if e.Status == nil || len(e.Details) == 0 {
+		return base
+	}
+	detailsBytes, err := json.MarshalIndent(e.Details, "", "  ")
+	if err != nil {
+		return base
+	}
+	return fmt.Sprintf("%s\nDetails:\n%s", base, string(detailsBytes))
+}
+
+func (e *vertexAIOperationError) Unwrap() error {
+	return e.CommonOpError
+}
+
+func (w *VertexAIOperationWaiter) Error() error {
+	if w != nil && w.Op.Error != nil {
+		opErr := &tpgresource.CommonOpError{Status: w.Op.Error}
+		if len(w.Op.Error.Details) == 0 {
+			return opErr
+		}
+		return &vertexAIOperationError{CommonOpError: opErr}
+	}
+	return nil
+}
+
 func (w *VertexAIOperationWaiter) QueryOp() (interface{}, error) {
 	if w == nil {
 		return nil, fmt.Errorf("Cannot query operation, it's unset or nil.")

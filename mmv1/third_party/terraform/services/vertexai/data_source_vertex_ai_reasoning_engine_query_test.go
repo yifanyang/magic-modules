@@ -1,12 +1,98 @@
 package vertexai_test
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-provider-google/google/acctest"
-	_ "github.com/hashicorp/terraform-provider-google/google/services/vertexai"
+	"github.com/hashicorp/terraform-provider-google/google/services/vertexai"
+	transport_tpg "github.com/hashicorp/terraform-provider-google/google/transport"
+	"google.golang.org/api/googleapi"
 )
+
+func TestUnitDataSourceVertexAIReasoningEngineQuery_404PreservesDetails(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		_, _ = rw.Write([]byte(`{
+			"error": {
+				"code": 404,
+				"message": "ReasoningEngine session was not found.",
+				"status": "NOT_FOUND",
+				"details": [
+					{
+						"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+						"reason": "REASONING_ENGINE_SESSION_NOT_FOUND",
+						"domain": "aiplatform.googleapis.com",
+						"metadata": {
+							"logs_url": "https://console.cloud.google.com/logs/query?project=my-proj"
+						}
+					},
+					{
+						"@type": "type.googleapis.com/google.rpc.Help",
+						"links": [
+							{
+								"description": "Troubleshooting query errors",
+								"url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/troubleshooting/use"
+							}
+						]
+					}
+				]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	ds := vertexai.DataSourceVertexAIReasoningEngineQuery()
+	d := ds.TestResourceData()
+	if err := d.Set("project", "my-proj"); err != nil {
+		t.Fatalf("d.Set(project): %v", err)
+	}
+	if err := d.Set("region", "us-central1"); err != nil {
+		t.Fatalf("d.Set(region): %v", err)
+	}
+	if err := d.Set("reasoning_engine_id", "987654"); err != nil {
+		t.Fatalf("d.Set(reasoning_engine_id): %v", err)
+	}
+
+	cfg := &transport_tpg.Config{
+		Client: srv.Client(),
+		CustomEndpoints: map[string]string{
+			vertexai.Product.CustomEndpointField: srv.URL + "/v1beta1/",
+		},
+	}
+
+	err := ds.Read(d, cfg)
+	if err == nil {
+		t.Fatal("expected non-nil error on HTTP 404")
+	}
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) {
+		t.Fatalf("expected error to wrap *googleapi.Error, got %T: %v", err, err)
+	}
+	if gerr.Code != http.StatusNotFound {
+		t.Errorf("got status code %d, want 404", gerr.Code)
+	}
+
+	got := err.Error()
+	for _, want := range []string{
+		`Error querying Vertex AI Reasoning Engine "projects/my-proj/locations/us-central1/reasoningEngines/987654": googleapi: Error 404: ReasoningEngine session was not found.`,
+		`"reason": "REASONING_ENGINE_SESSION_NOT_FOUND"`,
+		`"logs_url": "https://console.cloud.google.com/logs/query?project=my-proj"`,
+		`"url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/troubleshooting/use"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error output missing %q\ngot:\n%s", want, got)
+		}
+	}
+}
 
 func TestAccDataSourceVertexAIReasoningEngineQuery_basic(t *testing.T) {
 	t.Parallel()

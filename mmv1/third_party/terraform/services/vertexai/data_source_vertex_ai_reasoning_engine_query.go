@@ -101,7 +101,7 @@ func dataSourceVertexAIReasoningEngineQueryRead(d *schema.ResourceData, meta int
 		Headers:   http.Header{},
 	})
 	if err != nil {
-		return transport_tpg.HandleDataSourceNotFoundError(err, d, fmt.Sprintf("Vertex AI Reasoning Engine Query %q", id), id)
+		return fmt.Errorf("Error querying Vertex AI Reasoning Engine %q: %w", id, err)
 	}
 
 	resBytes, err := json.Marshal(res)
